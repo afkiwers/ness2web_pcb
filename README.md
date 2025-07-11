@@ -2,7 +2,7 @@
 
 This PCB is pushed onto the Ness Serial and Reader header and connectes the NESS Security PCB to the internet using an ESP32 programmed in Arduino Studio.
 
-## 3D Views of PCB
+### 3D Views of PCB
 <p align="center">
     <img src="images/ness_2_wifi_pcb_3d_render_top.png" alt="Ness-2-WIFI PCB 3D Render (Top)" height="200px" style="margin-right: 16px;"/>
     <img src="images/ness_2_wifi_pcb_3d_render_no_esp32_top.png" alt="Ness-2-WIFI PCB 3D Render (Top, No ESP32)" height="200px"/>
