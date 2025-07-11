@@ -1,22 +1,23 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <ArduinoJson.h>  // Add this line
+#include "env.h"
 
 #define RXD2 20
 #define TXD2 21
 
 #define LED_PIN 10  // Onboard LED pin
 
-const char* ssid = "iwi-perez";
-const char* password = "$Andre$Naoelle$";
-
 IPAddress local_IP(192, 168, 10, 5);
 IPAddress gateway(192, 168, 10, 1);
 IPAddress subnet(255, 255, 255, 0);
 IPAddress primaryDNS(8, 8, 8, 8);
 
-const char* serverURL = "http://192.168.10.70:8000/api/ness_comms-raw-data/";
-const char* apiKey = "MgceyBgD.uNMNhAMcKHwHTPWcdtQfjaOWxaTG5rYq";  // Replace with your actual API key
+extern const char* ssid;
+extern const char* password;
+
+extern const char* serverURL;
+extern const char* apiKey;
 
 String fw_version = "0.0.1a";
 
