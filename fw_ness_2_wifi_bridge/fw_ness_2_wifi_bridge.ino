@@ -225,6 +225,7 @@ void getUserInputs() {
 
       if (!error) {
         JsonArray arr = doc.as<JsonArray>();
+
         for (JsonObject jsonDoc : arr) {
           String raw_data = jsonDoc["raw_data"].as<String>();
           bool received = jsonDoc["input_command_received"];
@@ -243,12 +244,15 @@ void getUserInputs() {
             String nessCMD = jsonDoc["raw_data"].as<String>();
             // Serial1.println(nessCMD + '\r' + '\n');  // Send this to the NESS Security System
             Serial1.println(nessCMD);  // Send this to the NESS Security System
+            Serial1.flush();            // Wait until all data is physically sent
 
+            delay(100);
 
           } else {
             Serial.println("already processed...");
           }
         }
+        
       } else {
         Serial.println("❌ JSON parse failed");
       }
