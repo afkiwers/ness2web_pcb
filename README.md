@@ -1,6 +1,8 @@
 # Ness-2-WIFI - Interface
 
-This PCB is pushed onto the Ness Serial and Reader header and connectes the NESS Security PCB to the internet using an ESP32 programmed in Arduino Studio.
+This PCBA requires the **[NESS 2 Web API](https://github.com/afkiwers/ness_web_application)** which is a Django based web application and exposes the NESS Security Panel DX8/16 to the user using a modern, easy to understand interface.
+
+The PCB is pushed onto the Ness Serial and Reader header and connectes the NESS Security PCB to the internet using an ESP32 programmed in Arduino Studio.
 
 ## 3D Views of PCB
 <p align="center">
