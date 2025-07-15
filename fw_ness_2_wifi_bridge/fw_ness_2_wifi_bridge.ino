@@ -75,6 +75,7 @@ void setup() {
     Serial.println("❌ Failed to configure static IP");
   }
 
+  WiFi.setHostname("Ness2Web_Bridge");
   WiFi.begin(ssid, password);
   Serial.print("🚀 Connecting to WiFi...\n");
 
