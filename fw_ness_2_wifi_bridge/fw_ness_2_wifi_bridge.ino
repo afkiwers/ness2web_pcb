@@ -24,6 +24,8 @@ extern String APIUserInputEndpoint;
 extern const char* apiKey;
 extern const char* OTAPassword;
 
+bool otaEnabled = true;
+
 String fw_version = "0.0.1a";
 
 // Circular buffer
@@ -128,14 +130,18 @@ void setup() {
 }
 
 void loop() {
-  // Handle OTA updates
-  ArduinoOTA.handle();
+
+  if( otaEnabled ){
+    // Handle OTA updates
+    ArduinoOTA.handle();
+  }
 
   // Periodic user input check
   unsigned long now = millis();
   if (now - lastUserInputCheck >= userInputInterval) {
     lastUserInputCheck = now;
     getUserInputs();  // Call every 1 second
+    getSystemStatus();
   }
 
   // Step 1: Read all available Serial1 data into ring buffer
@@ -196,6 +202,7 @@ void sendToServer(String rawData) {
   jsonDoc["raw_data"] = rawData;
   jsonDoc["ip"] = WiFi.localIP().toString();
   jsonDoc["fw"] = fw_version;
+  jsonDoc["otaEnabled"] = otaEnabled;
 
   String jsonPayload;
   serializeJson(jsonDoc, jsonPayload);
@@ -204,67 +211,97 @@ void sendToServer(String rawData) {
 }
 
 
-void getUserInputs() {
+bool performGETRequest(const String& endpoint, String& responsePayload) {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("❌ WiFi disconnected");
+    return false;
+  }
 
-  if (WiFi.status() == WL_CONNECTED) {
+  HTTPClient http;
+  http.begin(serverRootURL + endpoint);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("Authorization", "Api-Key " + String(apiKey));
 
-    HTTPClient http;
-    
-    http.begin(serverRootURL + APIUserInputEndpoint);
-    http.addHeader("Content-Type", "application/json");
-    http.addHeader("Authorization", "Api-Key " + String(apiKey));
+  int httpCode = http.GET();
 
-    int httpCode = http.GET();
-
-    if (httpCode > 0) {
-      String payload = http.getString();
-      Serial.println(payload);
-
-      // Parse JSON array
-      StaticJsonDocument<1024> doc;  // Increase size if needed
-      DeserializationError error = deserializeJson(doc, payload);
-
-      if (!error) {
-        JsonArray arr = doc.as<JsonArray>();
-
-        for (JsonObject jsonDoc : arr) {
-          String raw_data = jsonDoc["raw_data"].as<String>();
-          bool received = jsonDoc["input_command_received"];
-
-          if (!received) {
-            Serial.println("🚀 Unprocessed command received:");
-            Serial.println(raw_data);
-
-            jsonDoc["input_command_received"] = true;
-            jsonDoc["ness2wifi_ack"] = true;
-
-            String jsonPayload;
-            serializeJson(jsonDoc, jsonPayload);
-            sendPostRequest(jsonPayload, APIUserInputEndpoint);
-
-            String nessCMD = jsonDoc["raw_data"].as<String>();
-            // Serial1.println(nessCMD + '\r' + '\n');  // Send this to the NESS Security System
-            Serial1.println(nessCMD);  // Send this to the NESS Security System
-            Serial1.flush();            // Wait until all data is physically sent
-
-            delay(100);
-
-          } else {
-            Serial.println("already processed...");
-          }
-        }
-        
-      } else {
-        Serial.println("❌ JSON parse failed");
-      }
-    } else {
-      Serial.print("GET failed, error: ");
-      Serial.println(http.errorToString(httpCode));
-    }
-
+  if (httpCode > 0) {
+    responsePayload = http.getString();
     http.end();
-
+    return true;
   } else {
-        Serial.println("❌ WiFi disconnected");
+    Serial.print("❌ GET failed: ");
+    Serial.println(http.errorToString(httpCode));
+    http.end();
+    return false;
   }
 }
+
+
+void getUserInputs() {
+  String payload;
+  if (!performGETRequest(APIUserInputEndpoint, payload)) return;
+
+  Serial.println("📥 API User Inputs Response:");
+  Serial.println(payload);
+
+  StaticJsonDocument<2048> doc;
+  DeserializationError error = deserializeJson(doc, payload);
+
+  if (error) {
+    Serial.print("❌ JSON parse failed: ");
+    Serial.println(error.c_str());
+    return;
+  }
+
+  JsonArray arr = doc.as<JsonArray>();
+  for (JsonObject jsonDoc : arr) {
+    String raw_data = jsonDoc["raw_data"] | "";
+    bool received = jsonDoc["input_command_received"] | false;
+
+    if (!received && raw_data.length() > 0) {
+      Serial.println("🚀 Unprocessed command received:");
+      Serial.println(raw_data);
+
+      Serial1.println(raw_data);
+      Serial1.flush();
+      delay(100);
+
+      jsonDoc["input_command_received"] = true;
+      jsonDoc["ness2wifi_ack"] = true;
+
+      String ackPayload;
+      serializeJson(jsonDoc, ackPayload);
+      sendPostRequest(ackPayload, APIUserInputEndpoint);
+    } else {
+      Serial.println("ℹ️ Already processed or no valid raw_data");
+    }
+  }
+}
+
+
+void getSystemStatus() {
+  String payload;
+  if (!performGETRequest(APISystemStatusEndpoint, payload)) return;
+
+  Serial.println("🔄 System Status Payload:");
+  Serial.println(payload);
+
+  StaticJsonDocument<1024> doc;
+  DeserializationError error = deserializeJson(doc, payload);
+
+  if (error) {
+    Serial.print("❌ JSON parse failed: ");
+    Serial.println(error.c_str());
+    return;
+  }
+
+  JsonArray arr = doc.as<JsonArray>();
+  for (JsonObject jsonDoc : arr) {
+    otaEnabled = jsonDoc["ness2wifi_ota_enabled"] | true;
+    Serial.print("✅ OTA Enabled: ");
+    Serial.println(otaEnabled ? "true" : "false");
+  }
+}
+
+
+
