@@ -1,3 +1,4 @@
 ness_2_wifi-backups/
 *.lck
 fw_ness_2_wifi_bridge/env.h
+.claude/
