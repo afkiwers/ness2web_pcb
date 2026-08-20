@@ -144,9 +144,9 @@ const char* password = "YOUR_WIFI_PASSWORD";
 
 // Django API server
 String serverRootURL        = "http://192.168.10.x";
-String APIRawDataEndpoint   = "/api/raw-data/";
-String APIUserInputEndpoint = "/api/user-inputs/";
-String APISystemStatusEndpoint = "/api/system-status/";
+String APIRawDataEndpoint   = "/api/ness_comms-raw-data/";
+String APIUserInputEndpoint = "/api/ness_comms-user-inputs/";
+String APISystemStatusEndpoint = "/api/ness_comms-system-status/";
 
 // Authentication
 const char* apiKey      = "YOUR_API_KEY";
