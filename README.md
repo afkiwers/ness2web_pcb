@@ -142,6 +142,10 @@ A ready-to-copy template lives at [`fw_ness_2_wifi_bridge/env.h.example`](fw_nes
 const char* ssid     = "YOUR_WIFI_SSID";
 const char* password = "YOUR_WIFI_PASSWORD";
 
+// Number of reconnect attempts (3s apart) after WiFi drops in loop() before
+// falling back to a full ESP.restart().
+int maxWifiRetryAttempts = 5;
+
 // Django API server
 // serverRootURL must end in "/api/"; the endpoint strings below are appended
 // directly to it (no leading slash) and must match the routes registered in
