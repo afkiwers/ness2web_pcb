@@ -297,7 +297,7 @@ void getSystemStatus() {
 
   JsonArray arr = doc.as<JsonArray>();
   for (JsonObject jsonDoc : arr) {
-    otaEnabled = jsonDoc["ness2wifi_ota_enabled"] | true;
+    otaEnabled = jsonDoc["ness2wifi_ota_enabled"];
     Serial.print("✅ OTA Enabled: ");
     Serial.println(otaEnabled ? "true" : "false");
   }
