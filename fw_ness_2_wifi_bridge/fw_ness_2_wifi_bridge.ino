@@ -24,6 +24,8 @@ extern String APIUserInputEndpoint;
 extern const char* apiKey;
 extern const char* OTAPassword;
 
+extern int maxWifiRetryAttempts;
+
 bool otaEnabled = true;
 
 String fw_version = "0.0.1a";
@@ -36,6 +38,10 @@ int readIndex = 0;
 
 unsigned long lastUserInputCheck = 0;
 const unsigned long userInputInterval = 1000; // 1 second
+
+unsigned long lastWifiRetryAttempt = 0;
+const unsigned long wifiRetryInterval = 3000; // wait between reconnect attempts
+int wifiRetryCount = 0;
 
 
 // Advance index in a circular fashion
@@ -132,9 +138,22 @@ void setup() {
 void loop() {
 
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("❌ WiFi lost. Restarting in 3s...");
-    delay(3000);
-    ESP.restart();
+    unsigned long now = millis();
+    if (now - lastWifiRetryAttempt >= wifiRetryInterval) {
+      lastWifiRetryAttempt = now;
+      wifiRetryCount++;
+
+      if (wifiRetryCount > maxWifiRetryAttempts) {
+        Serial.println("❌ WiFi still down after max reconnect attempts. Restarting...");
+        ESP.restart();
+      } else {
+        Serial.printf("⚠️ WiFi disconnected. Reconnect attempt %d/%d...\n", wifiRetryCount, maxWifiRetryAttempts);
+        WiFi.reconnect();
+      }
+    }
+  } else if (wifiRetryCount > 0) {
+    Serial.println("✅ WiFi reconnected.");
+    wifiRetryCount = 0;
   }
 
   if( otaEnabled ){
