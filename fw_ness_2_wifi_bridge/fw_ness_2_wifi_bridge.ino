@@ -36,6 +36,14 @@ byte buffer[bufferSize];
 int writeIndex = 0;
 int readIndex = 0;
 
+// Pending outbound message queue — holds raw_data lines that failed to
+// deliver (e.g. WiFi down) so they're retried instead of silently dropped.
+const int pendingQueueCapacity = 20;
+String pendingQueue[pendingQueueCapacity];
+int pendingQueueHead = 0;   // index of the oldest undelivered message
+int pendingQueueTail = 0;   // index of the next free slot
+int pendingQueueCount = 0;
+
 unsigned long lastUserInputCheck = 0;
 const unsigned long userInputInterval = 1000; // 1 second
 
@@ -70,6 +78,21 @@ String extractLineFromBuffer() {
   }
   line.trim();  // removes \r or \n whitespace
   return line;
+}
+
+// Queue an undelivered raw_data message for retry. Drops the oldest queued
+// message to make room when full, mirroring the ring buffer's overflow
+// policy above.
+void enqueuePendingMessage(const String& rawData) {
+  if (pendingQueueCount == pendingQueueCapacity) {
+    pendingQueueHead = (pendingQueueHead + 1) % pendingQueueCapacity;
+    pendingQueueCount--;
+    Serial.println("⚠️ Pending queue full: oldest unsent message discarded");
+  }
+  pendingQueue[pendingQueueTail] = rawData;
+  pendingQueueTail = (pendingQueueTail + 1) % pendingQueueCapacity;
+  pendingQueueCount++;
+  Serial.println("📥 Queued message for retry (WiFi down or send failed)");
 }
 
 void setup() {
@@ -167,6 +190,7 @@ void loop() {
     lastUserInputCheck = now;
     getUserInputs();  // Call every 1 second
     getSystemStatus();
+    flushPendingQueue();
   }
 
   // Step 1: Read all available Serial1 data into ring buffer
@@ -192,36 +216,39 @@ void loop() {
 }
 
 
-void sendPostRequest(String jsonPayload, String ApiEndpoint){
-  if (WiFi.status() == WL_CONNECTED) {
-      
-      HTTPClient http;
+bool sendPostRequest(String jsonPayload, String ApiEndpoint){
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("❌ WiFi disconnected");
+    return false;
+  }
 
-      http.begin(serverRootURL + ApiEndpoint);
-      http.addHeader("Content-Type", "application/json");
-      http.addHeader("Authorization", "Api-Key " + String(apiKey));
+  HTTPClient http;
 
-      int httpCode = http.POST(jsonPayload);
+  http.begin(serverRootURL + ApiEndpoint);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("Authorization", "Api-Key " + String(apiKey));
 
-      if (httpCode > 0) {
-        Serial.println("POST success, code: " + String(httpCode));
-        Serial.println("Response: " + http.getString());
-      } else {
+  int httpCode = http.POST(jsonPayload);
+  bool success = (httpCode >= 200 && httpCode < 300);
 
-        Serial.println("POST failed, error: " + http.errorToString(httpCode));
+  if (success) {
+    Serial.println("POST success, code: " + String(httpCode));
+    Serial.println("Response: " + http.getString());
+  } else if (httpCode > 0) {
+    Serial.println("POST failed, HTTP code: " + String(httpCode));
+  } else {
+    Serial.println("POST failed, error: " + http.errorToString(httpCode));
+  }
 
-      }
-
-      http.end();
-    } 
-    else {
-      Serial.println("❌ WiFi disconnected");
-    }
+  http.end();
+  return success;
 }
 
 
-void sendToServer(String rawData) {
-
+// Builds the raw-data JSON payload for a single panel message and attempts
+// to deliver it. Shared by sendToServer() (new messages) and
+// flushPendingQueue() (retries) so both use identical delivery logic.
+bool sendRawDataMessage(const String& rawData) {
   StaticJsonDocument<250> jsonDoc;
 
   jsonDoc["raw_data"] = rawData;
@@ -231,8 +258,30 @@ void sendToServer(String rawData) {
 
   String jsonPayload;
   serializeJson(jsonDoc, jsonPayload);
-  sendPostRequest(jsonPayload, APIRawDataEndpoint);
+  return sendPostRequest(jsonPayload, APIRawDataEndpoint);
+}
 
+
+void sendToServer(String rawData) {
+  // If there's already a backlog, queue behind it instead of attempting an
+  // out-of-order immediate send — keeps delivery order intact.
+  if (pendingQueueCount > 0 || !sendRawDataMessage(rawData)) {
+    enqueuePendingMessage(rawData);
+  }
+}
+
+
+// Retries queued messages in order, oldest first. Stops at the first
+// failure so a later message can't be delivered ahead of one still
+// waiting behind it; whatever remains stays queued for the next call.
+void flushPendingQueue() {
+  while (pendingQueueCount > 0) {
+    if (!sendRawDataMessage(pendingQueue[pendingQueueHead])) break;
+
+    Serial.println("📤 Delivered previously queued message");
+    pendingQueueHead = (pendingQueueHead + 1) % pendingQueueCapacity;
+    pendingQueueCount--;
+  }
 }
 
 
