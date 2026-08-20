@@ -44,12 +44,20 @@ int pendingQueueHead = 0;   // index of the oldest undelivered message
 int pendingQueueTail = 0;   // index of the next free slot
 int pendingQueueCount = 0;
 
-// Recently-executed user-input command IDs. If an ack POST fails, the
-// server keeps offering the same command as unacknowledged on the next
-// poll — this history lets that retry re-send just the ack instead of
-// re-running the command on the panel a second time.
+// Recently-executed user-input commands, keyed by (id, timestamp). If an ack
+// POST fails, the server keeps offering the same command as unacknowledged
+// on the next poll — this history lets that retry re-send just the ack
+// instead of re-running the command on the panel a second time.
+//
+// id alone is NOT enough: the server reuses the same UserInput row (same id)
+// for every instance of an identical command text via get_or_create() — e.g.
+// every "Disarm" click resolves to the same id, since the command string is
+// always the same for a given user. Only `timestamp` changes on each new
+// click. Keying on id alone would make every repeat of the same command
+// silently no-op after the first one ever ran.
 const int executedCommandHistorySize = 20;
 int executedCommandIds[executedCommandHistorySize];
+String executedCommandTimestamps[executedCommandHistorySize];
 int executedCommandHistoryNext = 0;  // next slot to overwrite (oldest)
 int executedCommandHistoryCount = 0;
 
@@ -104,17 +112,19 @@ void enqueuePendingMessage(const String& rawData) {
   Serial.println("📥 Queued message for retry (WiFi down or send failed)");
 }
 
-// Has this user-input command ID already been run on the panel?
-bool wasCommandExecuted(int id) {
+// Has this exact command instance (same id AND same timestamp) already
+// been run on the panel?
+bool wasCommandExecuted(int id, const String& timestamp) {
   for (int i = 0; i < executedCommandHistoryCount; i++) {
-    if (executedCommandIds[i] == id) return true;
+    if (executedCommandIds[i] == id && executedCommandTimestamps[i] == timestamp) return true;
   }
   return false;
 }
 
-// Record a command ID as executed, evicting the oldest entry once full.
-void markCommandExecuted(int id) {
+// Record a command instance as executed, evicting the oldest entry once full.
+void markCommandExecuted(int id, const String& timestamp) {
   executedCommandIds[executedCommandHistoryNext] = id;
+  executedCommandTimestamps[executedCommandHistoryNext] = timestamp;
   executedCommandHistoryNext = (executedCommandHistoryNext + 1) % executedCommandHistorySize;
   if (executedCommandHistoryCount < executedCommandHistorySize) executedCommandHistoryCount++;
 }
@@ -354,13 +364,14 @@ void getUserInputs() {
   JsonArray arr = doc.as<JsonArray>();
   for (JsonObject jsonDoc : arr) {
     int id = jsonDoc["id"] | -1;
+    String timestamp = jsonDoc["timestamp"] | "";
     String raw_data = jsonDoc["raw_data"] | "";
     bool received = jsonDoc["input_command_received"] | false;
 
     if (!received && raw_data.length() > 0) {
-      if (wasCommandExecuted(id)) {
-        // Already ran this on the panel — the ack just didn't land last
-        // time. Re-send the ack below without executing it again.
+      if (wasCommandExecuted(id, timestamp)) {
+        // Already ran this exact command instance — the ack just didn't
+        // land last time. Re-send the ack below without executing it again.
         Serial.println("ℹ️ Command already executed; re-sending ack only");
       } else {
         Serial.println("🚀 Unprocessed command received:");
@@ -370,7 +381,7 @@ void getUserInputs() {
         Serial1.flush();
         delay(100);
 
-        markCommandExecuted(id);
+        markCommandExecuted(id, timestamp);
       }
 
       jsonDoc["input_command_received"] = true;
