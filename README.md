@@ -135,7 +135,7 @@ Install the following libraries via the Arduino Library Manager:
 
 The firmware reads all credentials and endpoint configuration from a file called `env.h` in the same sketch folder. This file is **not included in the repository** — you must create it yourself.
 
-Create `fw_ness_2_wifi_bridge/env.h` with the following content:
+A ready-to-copy template lives at [`fw_ness_2_wifi_bridge/env.h.example`](fw_ness_2_wifi_bridge/env.h.example). Copy it to `fw_ness_2_wifi_bridge/env.h` and fill in the placeholders:
 
 ```cpp
 // WiFi credentials
@@ -143,17 +143,20 @@ const char* ssid     = "YOUR_WIFI_SSID";
 const char* password = "YOUR_WIFI_PASSWORD";
 
 // Django API server
-String serverRootURL        = "http://192.168.10.x";
-String APIRawDataEndpoint   = "/api/ness_comms-raw-data/";
-String APIUserInputEndpoint = "/api/ness_comms-user-inputs/";
-String APISystemStatusEndpoint = "/api/ness_comms-system-status/";
+// serverRootURL must end in "/api/"; the endpoint strings below are appended
+// directly to it (no leading slash) and must match the routes registered in
+// ness_comms/api/router.py on the server.
+String serverRootURL           = "http://your-server-ip:port/api/";
+String APIRawDataEndpoint      = "ness_comms-raw-data/";
+String APIUserInputEndpoint    = "ness_comms-user-inputs/";
+String APISystemStatusEndpoint = "ness_comms-system-status/";
 
 // Authentication
 const char* apiKey      = "YOUR_API_KEY";
 const char* OTAPassword = "YOUR_OTA_PASSWORD";
 ```
 
-> **Note:** Keep `env.h` out of version control. Add it to your `.gitignore` to avoid accidentally committing credentials.
+> **Note:** Keep `env.h` out of version control. It's already covered by `.gitignore` — never commit real credentials.
 
 ### Network Configuration
 
