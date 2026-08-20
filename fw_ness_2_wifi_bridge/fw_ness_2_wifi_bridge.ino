@@ -131,6 +131,12 @@ void setup() {
 
 void loop() {
 
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("❌ WiFi lost. Restarting in 3s...");
+    delay(3000);
+    ESP.restart();
+  }
+
   if( otaEnabled ){
     // Handle OTA updates
     ArduinoOTA.handle();
