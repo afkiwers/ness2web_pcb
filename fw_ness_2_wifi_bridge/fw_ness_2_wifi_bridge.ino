@@ -44,6 +44,15 @@ int pendingQueueHead = 0;   // index of the oldest undelivered message
 int pendingQueueTail = 0;   // index of the next free slot
 int pendingQueueCount = 0;
 
+// Recently-executed user-input command IDs. If an ack POST fails, the
+// server keeps offering the same command as unacknowledged on the next
+// poll — this history lets that retry re-send just the ack instead of
+// re-running the command on the panel a second time.
+const int executedCommandHistorySize = 20;
+int executedCommandIds[executedCommandHistorySize];
+int executedCommandHistoryNext = 0;  // next slot to overwrite (oldest)
+int executedCommandHistoryCount = 0;
+
 unsigned long lastUserInputCheck = 0;
 const unsigned long userInputInterval = 1000; // 1 second
 
@@ -93,6 +102,21 @@ void enqueuePendingMessage(const String& rawData) {
   pendingQueueTail = (pendingQueueTail + 1) % pendingQueueCapacity;
   pendingQueueCount++;
   Serial.println("📥 Queued message for retry (WiFi down or send failed)");
+}
+
+// Has this user-input command ID already been run on the panel?
+bool wasCommandExecuted(int id) {
+  for (int i = 0; i < executedCommandHistoryCount; i++) {
+    if (executedCommandIds[i] == id) return true;
+  }
+  return false;
+}
+
+// Record a command ID as executed, evicting the oldest entry once full.
+void markCommandExecuted(int id) {
+  executedCommandIds[executedCommandHistoryNext] = id;
+  executedCommandHistoryNext = (executedCommandHistoryNext + 1) % executedCommandHistorySize;
+  if (executedCommandHistoryCount < executedCommandHistorySize) executedCommandHistoryCount++;
 }
 
 void setup() {
@@ -329,23 +353,34 @@ void getUserInputs() {
 
   JsonArray arr = doc.as<JsonArray>();
   for (JsonObject jsonDoc : arr) {
+    int id = jsonDoc["id"] | -1;
     String raw_data = jsonDoc["raw_data"] | "";
     bool received = jsonDoc["input_command_received"] | false;
 
     if (!received && raw_data.length() > 0) {
-      Serial.println("🚀 Unprocessed command received:");
-      Serial.println(raw_data);
+      if (wasCommandExecuted(id)) {
+        // Already ran this on the panel — the ack just didn't land last
+        // time. Re-send the ack below without executing it again.
+        Serial.println("ℹ️ Command already executed; re-sending ack only");
+      } else {
+        Serial.println("🚀 Unprocessed command received:");
+        Serial.println(raw_data);
 
-      Serial1.println(raw_data);
-      Serial1.flush();
-      delay(100);
+        Serial1.println(raw_data);
+        Serial1.flush();
+        delay(100);
+
+        markCommandExecuted(id);
+      }
 
       jsonDoc["input_command_received"] = true;
       jsonDoc["ness2wifi_ack"] = true;
 
       String ackPayload;
       serializeJson(jsonDoc, ackPayload);
-      sendPostRequest(ackPayload, APIUserInputEndpoint);
+      if (!sendPostRequest(ackPayload, APIUserInputEndpoint)) {
+        Serial.println("⚠️ Ack failed to send; server will re-offer this command next poll");
+      }
     } else {
       Serial.println("ℹ️ Already processed or no valid raw_data");
     }
