@@ -28,7 +28,26 @@ extern int maxWifiRetryAttempts;
 
 bool otaEnabled = true;
 
-String fw_version = "0.0.1a";
+// Debug (USB Serial) output toggle, server-controlled via
+// ness2wifi_debug_prints_enabled on the /system-status/ poll, same pattern
+// as otaEnabled. Starts true so setup()'s WiFi-connect diagnostics are
+// visible before the ESP has ever talked to the server; getSystemStatus()
+// then takes over (defaulting to off if the server doesn't send the field,
+// so a stale/undeployed server can never crash the parse — see there).
+bool debugPrintsEnabled = true;
+
+// Gate all debug output behind debugPrintsEnabled. Macros (not wrapper
+// functions) so every existing call site's argument types — String,
+// literals, concatenated expressions — keep working unchanged. Wrapped in
+// do{...}while(0) so each expands to a single statement — without it, a
+// bare `if (debugPrintsEnabled) Serial.println(x)` used as the body of an
+// outer if/else (e.g. `if (cond) DEBUG_PRINTLN(...); else ...`) would let
+// the outer `else` bind to this macro's own internal `if` instead.
+#define DEBUG_PRINTLN(x) do { if (debugPrintsEnabled) Serial.println(x); } while (0)
+#define DEBUG_PRINT(x)   do { if (debugPrintsEnabled) Serial.print(x); } while (0)
+#define DEBUG_PRINTF(...) do { if (debugPrintsEnabled) Serial.printf(__VA_ARGS__); } while (0)
+
+String fw_version = "0.1.0";
 
 // Circular buffer
 const int bufferSize = 200;
@@ -62,7 +81,10 @@ int executedCommandHistoryNext = 0;  // next slot to overwrite (oldest)
 int executedCommandHistoryCount = 0;
 
 unsigned long lastUserInputCheck = 0;
-const unsigned long userInputInterval = 1000; // 1 second
+const unsigned long userInputInterval = 1000; // 1 second — command responsiveness matters
+
+unsigned long lastSystemStatusCheck = 0;
+const unsigned long systemStatusInterval = 5000; // 5 seconds — ota/debug flags rarely change
 
 unsigned long lastWifiRetryAttempt = 0;
 const unsigned long wifiRetryInterval = 3000; // wait between reconnect attempts
@@ -104,12 +126,12 @@ void enqueuePendingMessage(const String& rawData) {
   if (pendingQueueCount == pendingQueueCapacity) {
     pendingQueueHead = (pendingQueueHead + 1) % pendingQueueCapacity;
     pendingQueueCount--;
-    Serial.println("⚠️ Pending queue full: oldest unsent message discarded");
+    DEBUG_PRINTLN("⚠️ Pending queue full: oldest unsent message discarded");
   }
   pendingQueue[pendingQueueTail] = rawData;
   pendingQueueTail = (pendingQueueTail + 1) % pendingQueueCapacity;
   pendingQueueCount++;
-  Serial.println("📥 Queued message for retry (WiFi down or send failed)");
+  DEBUG_PRINTLN("📥 Queued message for retry (WiFi down or send failed)");
 }
 
 // Has this exact command instance (same id AND same timestamp) already
@@ -133,33 +155,33 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);  // Adjust if needed depending on your board
 
-  Serial.begin(9600);
+  Serial.begin(115200);  // USB debug console only — Serial1 (the panel UART) stays at 9600, fixed by the panel's own protocol
   Serial1.begin(9600, SERIAL_8N1, RXD2, TXD2, true);
 
   if (!WiFi.config(local_IP, gateway, subnet, primaryDNS)) {
-    Serial.println("❌ Failed to configure static IP");
+    DEBUG_PRINTLN("❌ Failed to configure static IP");
   }
 
   WiFi.setHostname("Ness2Web_Bridge");
   WiFi.begin(ssid, password);
-  Serial.print("🚀 Connecting to WiFi...\n");
+  DEBUG_PRINT("🚀 Connecting to WiFi...\n");
 
   unsigned long startAttemptTime = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - startAttemptTime < 30000) {
     delay(500);
-    Serial.print("Waiting for WiFi...\n");
+    DEBUG_PRINT("Waiting for WiFi...\n");
     digitalWrite(LED_PIN, !digitalRead(LED_PIN));
   }
 
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("❌ WiFi connection failed. Restarting...");
+    DEBUG_PRINTLN("❌ WiFi connection failed. Restarting...");
     delay(3000);
     ESP.restart();
   }
 
   digitalWrite(LED_PIN, HIGH);  // Connected
 
-  Serial.println("\nWiFi connected. IP address: " + WiFi.localIP().toString());
+  DEBUG_PRINTLN("\nWiFi connected. IP address: " + WiFi.localIP().toString());
 
   // OTA Setup
   ArduinoOTA.setHostname("esp32-ness2web-bridge");
@@ -167,29 +189,29 @@ void setup() {
 
   ArduinoOTA.onStart([]() {
     String type = (ArduinoOTA.getCommand() == U_FLASH) ? "sketch" : "filesystem";
-    Serial.println("OTA Start: Updating " + type);
+    DEBUG_PRINTLN("OTA Start: Updating " + type);
   });
 
   ArduinoOTA.onEnd([]() {
-    Serial.println("\nOTA End");
+    DEBUG_PRINTLN("\nOTA End");
   });
 
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    Serial.printf("OTA Progress: %u%%\r", (progress / (total / 100)));
+    DEBUG_PRINTF("OTA Progress: %u%%\r", (progress / (total / 100)));
   });
 
   ArduinoOTA.onError([](ota_error_t error) {
-    Serial.printf("OTA Error[%u]: ", error);
-    if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-    else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-    else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-    else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-    else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    DEBUG_PRINTF("OTA Error[%u]: ", error);
+    if (error == OTA_AUTH_ERROR) DEBUG_PRINTLN("Auth Failed");
+    else if (error == OTA_BEGIN_ERROR) DEBUG_PRINTLN("Begin Failed");
+    else if (error == OTA_CONNECT_ERROR) DEBUG_PRINTLN("Connect Failed");
+    else if (error == OTA_RECEIVE_ERROR) DEBUG_PRINTLN("Receive Failed");
+    else if (error == OTA_END_ERROR) DEBUG_PRINTLN("End Failed");
   });
 
   ArduinoOTA.begin();
-  Serial.println("OTA Ready");
-  Serial.println("IP address: " + WiFi.localIP().toString());
+  DEBUG_PRINTLN("OTA Ready");
+  DEBUG_PRINTLN("IP address: " + WiFi.localIP().toString());
 }
 
 void loop() {
@@ -201,15 +223,15 @@ void loop() {
       wifiRetryCount++;
 
       if (wifiRetryCount > maxWifiRetryAttempts) {
-        Serial.println("❌ WiFi still down after max reconnect attempts. Restarting...");
+        DEBUG_PRINTLN("❌ WiFi still down after max reconnect attempts. Restarting...");
         ESP.restart();
       } else {
-        Serial.printf("⚠️ WiFi disconnected. Reconnect attempt %d/%d...\n", wifiRetryCount, maxWifiRetryAttempts);
+        DEBUG_PRINTF("⚠️ WiFi disconnected. Reconnect attempt %d/%d...\n", wifiRetryCount, maxWifiRetryAttempts);
         WiFi.reconnect();
       }
     }
   } else if (wifiRetryCount > 0) {
-    Serial.println("✅ WiFi reconnected.");
+    DEBUG_PRINTLN("✅ WiFi reconnected.");
     wifiRetryCount = 0;
   }
 
@@ -218,13 +240,21 @@ void loop() {
     ArduinoOTA.handle();
   }
 
-  // Periodic user input check
   unsigned long now = millis();
+
+  // Periodic user input check — kept at 1s, command responsiveness matters
   if (now - lastUserInputCheck >= userInputInterval) {
     lastUserInputCheck = now;
-    getUserInputs();  // Call every 1 second
-    getSystemStatus();
+    getUserInputs();
     flushPendingQueue();
+  }
+
+  // Periodic system status check (OTA/debug flags) — these rarely change,
+  // so this runs on its own slower interval instead of paying for a second
+  // blocking HTTP round-trip every single second.
+  if (now - lastSystemStatusCheck >= systemStatusInterval) {
+    lastSystemStatusCheck = now;
+    getSystemStatus();
   }
 
   // Step 1: Read all available Serial1 data into ring buffer
@@ -235,15 +265,15 @@ void loop() {
     // Prevent buffer overwrite (discard oldest byte)
     if (writeIndex == readIndex) {
       readIndex = advance(readIndex);
-      Serial.println("Buffer overflow: oldest byte discarded");
+      DEBUG_PRINTLN("Buffer overflow: oldest byte discarded");
     }
   }
 
   // Step 2: If there is a full line (ending in '\n'), extract it
   while (findNewlineInBuffer()) {
     String message = extractLineFromBuffer();
-    Serial.print("Received message: ");
-    Serial.println(message);
+    DEBUG_PRINT("Received message: ");
+    DEBUG_PRINTLN(message);
 
     sendToServer(message);
   }
@@ -252,7 +282,7 @@ void loop() {
 
 bool sendPostRequest(String jsonPayload, String ApiEndpoint){
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("❌ WiFi disconnected");
+    DEBUG_PRINTLN("❌ WiFi disconnected");
     return false;
   }
 
@@ -266,12 +296,12 @@ bool sendPostRequest(String jsonPayload, String ApiEndpoint){
   bool success = (httpCode >= 200 && httpCode < 300);
 
   if (success) {
-    Serial.println("POST success, code: " + String(httpCode));
-    Serial.println("Response: " + http.getString());
+    DEBUG_PRINTLN("POST success, code: " + String(httpCode));
+    DEBUG_PRINTLN("Response: " + http.getString());
   } else if (httpCode > 0) {
-    Serial.println("POST failed, HTTP code: " + String(httpCode));
+    DEBUG_PRINTLN("POST failed, HTTP code: " + String(httpCode));
   } else {
-    Serial.println("POST failed, error: " + http.errorToString(httpCode));
+    DEBUG_PRINTLN("POST failed, error: " + http.errorToString(httpCode));
   }
 
   http.end();
@@ -312,7 +342,7 @@ void flushPendingQueue() {
   while (pendingQueueCount > 0) {
     if (!sendRawDataMessage(pendingQueue[pendingQueueHead])) break;
 
-    Serial.println("📤 Delivered previously queued message");
+    DEBUG_PRINTLN("📤 Delivered previously queued message");
     pendingQueueHead = (pendingQueueHead + 1) % pendingQueueCapacity;
     pendingQueueCount--;
   }
@@ -321,7 +351,7 @@ void flushPendingQueue() {
 
 bool performGETRequest(const String& endpoint, String& responsePayload) {
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("❌ WiFi disconnected");
+    DEBUG_PRINTLN("❌ WiFi disconnected");
     return false;
   }
 
@@ -337,8 +367,8 @@ bool performGETRequest(const String& endpoint, String& responsePayload) {
     http.end();
     return true;
   } else {
-    Serial.print("❌ GET failed: ");
-    Serial.println(http.errorToString(httpCode));
+    DEBUG_PRINT("❌ GET failed: ");
+    DEBUG_PRINTLN(http.errorToString(httpCode));
     http.end();
     return false;
   }
@@ -349,15 +379,15 @@ void getUserInputs() {
   String payload;
   if (!performGETRequest(APIUserInputEndpoint, payload)) return;
 
-  Serial.println("📥 API User Inputs Response:");
-  Serial.println(payload);
+  DEBUG_PRINTLN("📥 API User Inputs Response:");
+  DEBUG_PRINTLN(payload);
 
   StaticJsonDocument<2048> doc;
   DeserializationError error = deserializeJson(doc, payload);
 
   if (error) {
-    Serial.print("❌ JSON parse failed: ");
-    Serial.println(error.c_str());
+    DEBUG_PRINT("❌ JSON parse failed: ");
+    DEBUG_PRINTLN(error.c_str());
     return;
   }
 
@@ -372,10 +402,10 @@ void getUserInputs() {
       if (wasCommandExecuted(id, timestamp)) {
         // Already ran this exact command instance — the ack just didn't
         // land last time. Re-send the ack below without executing it again.
-        Serial.println("ℹ️ Command already executed; re-sending ack only");
+        DEBUG_PRINTLN("ℹ️ Command already executed; re-sending ack only");
       } else {
-        Serial.println("🚀 Unprocessed command received:");
-        Serial.println(raw_data);
+        DEBUG_PRINTLN("🚀 Unprocessed command received:");
+        DEBUG_PRINTLN(raw_data);
 
         Serial1.println(raw_data);
         Serial1.flush();
@@ -390,10 +420,10 @@ void getUserInputs() {
       String ackPayload;
       serializeJson(jsonDoc, ackPayload);
       if (!sendPostRequest(ackPayload, APIUserInputEndpoint)) {
-        Serial.println("⚠️ Ack failed to send; server will re-offer this command next poll");
+        DEBUG_PRINTLN("⚠️ Ack failed to send; server will re-offer this command next poll");
       }
     } else {
-      Serial.println("ℹ️ Already processed or no valid raw_data");
+      DEBUG_PRINTLN("ℹ️ Already processed or no valid raw_data");
     }
   }
 }
@@ -403,25 +433,29 @@ void getSystemStatus() {
   String payload;
   if (!performGETRequest(APISystemStatusEndpoint, payload)) return;
 
-  Serial.println("🔄 System Status Payload:");
-  Serial.println(payload);
+  DEBUG_PRINTLN("🔄 System Status Payload:");
+  DEBUG_PRINTLN(payload);
 
   StaticJsonDocument<1024> doc;
   DeserializationError error = deserializeJson(doc, payload);
 
   if (error) {
-    Serial.print("❌ JSON parse failed: ");
-    Serial.println(error.c_str());
+    DEBUG_PRINT("❌ JSON parse failed: ");
+    DEBUG_PRINTLN(error.c_str());
     return;
   }
 
   JsonArray arr = doc.as<JsonArray>();
   for (JsonObject jsonDoc : arr) {
     otaEnabled = jsonDoc["ness2wifi_ota_enabled"];
-    Serial.print("✅ OTA Enabled: ");
-    Serial.println(otaEnabled ? "true" : "false");
+    DEBUG_PRINT("✅ OTA Enabled: ");
+    DEBUG_PRINTLN(otaEnabled ? "true" : "false");
+
+    // Explicit | false default: if the server hasn't been redeployed with
+    // this field yet (or ever drops it), this must never crash — it just
+    // converges to "debug prints off" instead, which is also the desired
+    // steady-state default for normal operation.
+    debugPrintsEnabled = jsonDoc["ness2wifi_debug_prints_enabled"] | false;
   }
 }
-
-
 
